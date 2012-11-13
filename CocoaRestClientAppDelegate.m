@@ -317,29 +317,48 @@ static CRCContentType requestContentType;
 	
 	BOOL contentTypeSet = NO;
 	
-	if(self.rawRequestInput) {
-		if ([requestMethodsWithBody containsObject:method]) {
-			if([filesTable count] > 0 && [[requestText string] isEqualToString:@""]) {
+	// compose the request for requests that have a body
+	if ([requestMethodsWithBody containsObject:method]) {
+		if (self.rawRequestInput) {
+			if ([filesTable count] > 0 && [[requestText string] isEqualToString:@""]) {
 				[CRCFileRequest createRequest:request];
 			}
 			else  {
 				[CRCRawRequest createRequest:request];
 			}
 		}		
+		else if (CRCContentTypeFormEncoded == requestContentType) {
+			[CRCFormEncodedRequest createRequest:request];
+            contentTypeSet = YES;
+		}
+		else if (CRCContentTypeMultipart == requestContentType) {
+			[CRCMultipartRequest createRequest:request];
+			contentTypeSet = YES;
+		}
+		else {
+			NSLog(@"What to do in %s on %d?", __FILE__, __LINE__);
+		}
 	}
+	
+	// GET requests (ugly workaround!!!)
 	else {
-		if ([requestMethodsWithBody containsObject:method]) {
-			switch(requestContentType) {
-				case CRCContentTypeFormEncoded:
-					[CRCFormEncodedRequest createRequest:request];
-                    contentTypeSet = YES;
-					break;
+		if ([paramsTable count] > 0) {
+			NSMutableArray *parts = [NSMutableArray arrayWithCapacity:[paramsTable count]];
+			
+			// collect params
+			for (NSDictionary *row in paramsTable) {
+				NSString *key   = [row objectForKey:@"key"];
+				NSString *value = [row objectForKey:@"value"];
 				
-				case CRCContentTypeMultipart:
-					[CRCMultipartRequest createRequest:request];
-                    contentTypeSet = YES;
-					break;
+				key = [key stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+				value = [value stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+				value = [value stringByReplacingOccurrencesOfString:@"&" withString:@"%26"];
+				[parts addObject:[NSString stringWithFormat:@"%@=%@", key, value]];
 			}
+			
+			// add them to the URL
+			NSString *connector = (NSNotFound == [urlEscaped rangeOfString:@"?"].location) ? @"?" : @"&";
+			request.URL = [NSURL URLWithString:[NSString stringWithFormat:@"%@%@%@", urlEscaped, connector, [parts componentsJoinedByString:@"&"]]];
 		}
 	}
 	
@@ -446,6 +465,8 @@ static CRCContentType requestContentType;
 {
     NSMutableString *headers = [[NSMutableString alloc] init];
     if (inRequest) {
+		[headers appendFormat:@"%@\n\n", [inRequest.URL absoluteString]];
+		
         NSDictionary *sentHeaders = [inRequest allHTTPHeaderFields];
         for (NSString *key in sentHeaders) {
             [headers appendFormat:@"%@: %@\n", key, [sentHeaders objectForKey:key]];
